@@ -248,6 +248,7 @@ td.mount{font-size:9.5px;word-break:normal;overflow-wrap:normal;white-space:nowr
         <option value="standard">Standard</option>
         <option value="haldeman">Haldeman</option>
         <option value="master">Master</option>
+        <option value="adc">ADC</option>
       </select>
       <span class="profilehint" id="profileHint">Pick the customer. Each profile auto-detects whether the file is unit-type (UNITS column populated) or a regular takeoff and applies that customer's matching layout.</span>
     </div>
@@ -262,6 +263,39 @@ td.mount{font-size:9.5px;word-break:normal;overflow-wrap:normal;white-space:nowr
         <p>Reading file…</p>
       </div>
       <input type="file" id="fileInput" accept=".xlsx,.xlsm,.xls,.csv">
+    </div>
+    <style>
+.adcpanel{margin:26px;padding:22px;border:2px solid var(--ink);border-radius:10px;background:#fff}
+.adcpanel h3{font-family:Archivo,sans-serif;font-size:16px;margin:0 0 14px}
+.adcgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.adcfield{display:flex;flex-direction:column;gap:5px}
+.adcfield label{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);font-weight:600}
+.adcfield input{font-family:Inter,system-ui,sans-serif;font-size:14px;padding:8px 10px;border:1.5px solid var(--line);border-radius:7px}
+.adcdrops{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+.adcfile{display:flex;flex-direction:column;gap:4px;padding:16px;border:2px dashed var(--line);border-radius:9px;background:#F6F8FA;cursor:pointer;text-align:center;position:relative}
+.adcfile:hover{border-color:var(--blue);background:#EEF3FB}
+.adcfile input[type=file]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.adcfl{font-family:Archivo,sans-serif;font-weight:700;font-size:14px}
+.adcfn{font-size:12px;color:var(--ink-soft);word-break:break-word}
+.adcbtn{margin-top:18px;width:100%;padding:12px;border:0;border-radius:8px;background:var(--blue);color:#fff;font-family:Archivo,sans-serif;font-weight:700;font-size:15px;cursor:pointer}
+.adcbtn:hover{filter:brightness(1.06)}
+.adcstatus{margin-top:12px;font-size:12.5px;color:var(--ink-soft);min-height:16px;text-align:center}
+@media(max-width:640px){.adcgrid,.adcdrops{grid-template-columns:1fr}}
+</style>
+    <div class="adcpanel hidden" id="adcPanel">
+      <h3>ADC takeoff — two CSVs to formatted .xlsx</h3>
+      <div class="adcgrid">
+        <div class="adcfield"><label>Project name</label><input id="adcProj" placeholder="DATADOG" autocomplete="off"></div>
+        <div class="adcfield"><label>Plans dated</label><input id="adcPlans" placeholder="4/03/26" autocomplete="off"></div>
+        <div class="adcfield"><label>Address line 1</label><input id="adcAddr1" placeholder="225 Franklin Street" autocomplete="off"></div>
+        <div class="adcfield"><label>Address line 2</label><input id="adcAddr2" placeholder="Boston, MA 02110" autocomplete="off"></div>
+      </div>
+      <div class="adcdrops">
+        <label class="adcfile"><span class="adcfl">Subject CSV</span><span class="adcfn" id="adcSubjName">No file chosen</span><input type="file" id="adcSubj" accept=".csv"></label>
+        <label class="adcfile"><span class="adcfl">Label CSV</span><span class="adcfn" id="adcLabName">No file chosen</span><input type="file" id="adcLab" accept=".csv"></label>
+      </div>
+      <button class="adcbtn" id="adcGen">Generate TAKEOFF .xlsx</button>
+      <div class="adcstatus" id="adcStatus"></div>
     </div>
     <div id="errBox" class="errbox hidden"></div>
     <div class="ufoot">
@@ -2138,6 +2172,111 @@ fileInput.addEventListener("change",e=>handleFile(e.target.files[0]));
 ["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();e.stopPropagation();if(e.dataTransfer)e.dataTransfer.dropEffect="copy";drop.classList.add("drag");}));
 ["dragleave","dragend"].forEach(ev=>drop.addEventListener(ev,e=>{if(ev==="dragleave"&&drop.contains(e.relatedTarget))return;drop.classList.remove("drag");}));
 drop.addEventListener("drop",e=>{e.preventDefault();e.stopPropagation();drop.classList.remove("drag");var dt=e.dataTransfer;var f=dt&&dt.files&&dt.files[0];if(f)handleFile(f);});
+
+/* ===== ADC profile: two CSVs (Subject + Label) -> formatted TAKEOFF .xlsx ===== */
+(function(){
+  var sel=document.getElementById("custSelect");
+  var dropEl=document.getElementById("drop");
+  var panel=document.getElementById("adcPanel");
+  var hint=document.getElementById("profileHint");
+  if(!sel||!panel)return;
+  var DEFAULT_HINT=hint?hint.textContent:"";
+  function syncMode(){
+    var adc=sel.value==="adc";
+    panel.classList.toggle("hidden",!adc);
+    if(dropEl)dropEl.classList.toggle("hidden",adc);
+    if(hint)hint.textContent=adc
+      ? "ADC: enter the header details, add the Subject and Label CSVs, then download the formatted TAKEOFF .xlsx."
+      : DEFAULT_HINT;
+  }
+  sel.addEventListener("change",syncMode);
+  syncMode();
+
+  function nameEcho(inp,span){ if(inp&&span) inp.addEventListener("change",function(){ span.textContent=(inp.files&&inp.files[0])?inp.files[0].name:"No file chosen"; }); }
+  var subjIn=document.getElementById("adcSubj"), labIn=document.getElementById("adcLab");
+  nameEcho(subjIn,document.getElementById("adcSubjName"));
+  nameEcho(labIn,document.getElementById("adcLabName"));
+
+  function setStatus(m,isErr){ var el=document.getElementById("adcStatus"); if(el){ el.textContent=m||""; el.style.color=isErr?"#C0392B":""; } }
+
+  function parseCSVtext(text){
+    text=String(text||"").replace(/^﻿/,"");
+    var rows=[],i=0,fld="",row=[],q=false;
+    var pushF=function(){ row.push(fld); fld=""; };
+    var pushR=function(){ pushF(); rows.push(row); row=[]; };
+    while(i<text.length){
+      var c=text[i];
+      if(q){ if(c==='"'){ if(text[i+1]==='"'){ fld+='"'; i++; } else { q=false; } } else { fld+=c; } }
+      else { if(c==='"'){ q=true; } else if(c===','){ pushF(); } else if(c==='\r'){} else if(c==='\n'){ pushR(); } else { fld+=c; } }
+      i++;
+    }
+    if(fld.length||row.length)pushR();
+    return rows.filter(function(r){ return !(r.length===1&&String(r[0]).trim()===""); });
+  }
+  function readText(file){ return new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){ res(String(r.result||"")); }; r.onerror=function(){ rej(r.error||new Error("read failed")); }; r.readAsText(file); }); }
+  function classOf(rows){ var h=((rows[0]&&rows[0][0])||"").trim().toLowerCase(); return h.indexOf("label")===0?"label":(h.indexOf("subject")===0?"subject":"?"); }
+  function numify(v){ var t=String(v).trim(); if(t==="")return v; var n=Number(t.replace(/,/g,"")); return isFinite(n)?n:v; }
+
+  var genBtn=document.getElementById("adcGen");
+  if(genBtn) genBtn.addEventListener("click",function(){
+    if(typeof ExcelJS==="undefined"){ setStatus("Excel engine not loaded.",true); return; }
+    var proj=((document.getElementById("adcProj")||{}).value||"").trim();
+    var a1=((document.getElementById("adcAddr1")||{}).value||"").trim();
+    var a2=((document.getElementById("adcAddr2")||{}).value||"").trim();
+    var plans=((document.getElementById("adcPlans")||{}).value||"").trim();
+    if(!proj){ setStatus("Enter a project name.",true); return; }
+    if(!subjIn||!subjIn.files[0]||!labIn||!labIn.files[0]){ setStatus("Add both the Subject and Label CSVs.",true); return; }
+    setStatus("Building workbook...");
+    Promise.all([readText(subjIn.files[0]),readText(labIn.files[0])]).then(function(texts){
+      var r1=parseCSVtext(texts[0]), r2=parseCSVtext(texts[1]);
+      var subj=r1, lab=r2;
+      if(classOf(r1)==="label" && classOf(r2)==="subject"){ subj=r2; lab=r1; }
+      if(!subj.length||!lab.length){ setStatus("One of the CSVs was empty.",true); return; }
+
+      var wb=new ExcelJS.Workbook(); wb.creator="Triune Solutions"; wb.created=new Date();
+      var projU=proj.toUpperCase();
+      var ws=wb.addWorksheet((projU+" TAKEOFF").slice(0,31));
+      ws.getColumn(1).width=47.44; ws.getColumn(2).width=13.55;
+      var FN="Aptos Narrow";
+      function put(rn,a,b,bold,merge,wrap){
+        var cA=ws.getCell(rn,1); cA.value=a; cA.font={name:FN,size:11,bold:!!bold};
+        var cB=ws.getCell(rn,2); cB.font={name:FN,size:11,bold:!!bold};
+        if(b!==undefined&&b!==null){ cB.value=b; }
+        if(merge){ ws.mergeCells(rn,1,rn,2); cA.alignment={horizontal:"center",vertical:"middle",wrapText:!!wrap}; }
+      }
+      var d=new Date();
+      var mm=("0"+(d.getMonth()+1)).slice(-2), dd=("0"+d.getDate()).slice(-2), yy=(""+d.getFullYear()).slice(-2);
+      var today=mm+"/"+dd+"/"+yy;
+      var rn=1;
+      put(rn++, projU+(a1?(" "+a1):"")+(a2?("\n"+a2):""), undefined, true, true, true);
+      ws.getRow(1).height=30;
+      put(rn++, "PLANS DATED "+plans, undefined, true, true, false);
+      put(rn++, "TODAY "+today, undefined, true, true, false);
+      put(rn++, "TRIUNE TAKEOFF", undefined, true, true, false);
+      function block(rows,bold){
+        rows.forEach(function(row,idx){
+          var a=(row[0]!==undefined?row[0]:"");
+          var b=row[1];
+          if(idx>0) b=numify(b);
+          put(rn++, a, b, bold, false, false);
+        });
+      }
+      block(subj,true);
+      block(lab,false);
+
+      return wb.xlsx.writeBuffer().then(function(buf){
+        var blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+        var url=URL.createObjectURL(blob);
+        var dlName="Takeoff_"+proj.replace(/[^\w]+/g,"_").replace(/^_+|_+$/g,"")+".xlsx";
+        var a=document.createElement("a"); a.href=url; a.download=dlName;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function(){ URL.revokeObjectURL(url); },4000);
+        setStatus("Downloaded "+dlName);
+      });
+    }).catch(function(e){ setStatus("Failed: "+((e&&e.message)||e),true); });
+  });
+})();
+
 
 window.resetApp=()=>{
   document.getElementById("app").classList.add("hidden");
